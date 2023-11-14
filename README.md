@@ -58,11 +58,11 @@ eg:
 					"uaadomain": "xxxx.x.x.hana.ondemand.com",
 					"onpremise_proxy_port": "3128",                  // change this.
 					"verificationkey": ""
-}
-}
-]
-}
-}
+					}
+				}
+			]
+		}
+	}
 ```
 
 
