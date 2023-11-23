@@ -1,6 +1,7 @@
 const express = require("express");
-const http = require("http");
-const https = require("https");
+const { error } = require("node:console");
+const http = require("node:http");
+const https = require("node:https");
 
 /** Number of times to do a request retry when forwarded request fails.*/
 const request_retries = 3;
@@ -13,6 +14,8 @@ const default_port = 3128;
 
 /**Express app */
 const app = express();
+// disable powered by header
+app.disable("x-powered-by");
 //Body Parsers middlewares
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -54,76 +57,91 @@ const request = (config, data = null, retries = request_retries) => {
       delete config.protocol;
 
       let _data = [];
-      for (let i = 0; i < retries; i++) {
-        const req = _agent.request(config, (res) => {
-          // collect the data
-          res.on("data", (chunk) => {
-            _data.push(chunk);
-          });
-
-          // create the response
-          res.on("end", async () => {
-            let _body;
-
-            try {
-              if (res.headers["content-type"]?.includes("application/json")) {
-                // remove any JSON SYNTAXERROR wrt illegal whitespace.
-                // _data = _data.map((chunk) => chunk.toString().replace(/[\n\r\s\t]+/g, " "));
-                _body = JSON.parse(Buffer.concat(_data).toString("utf-8"));
-              }
-              //parse html for content type text/html
-              else if (res.headers["content-type"]?.includes("text/html")) {
-                _body = Buffer.concat(_data).toString("utf-8");
-              } else {
-                // check if header has encoding and use that to decode the buffer.
-                _body = Buffer.concat(_data).toString(res.headers["content-encoding"] ?? "utf-8");
-              }
-            } catch (err) {
-              _body = Buffer.concat(_data).toString();
-            }
-
-            const response = {
-              status: res.statusCode,
-              status_message: res.statusMessage,
-              headers: res.headers,
-              body: _body,
-            };
-
-            // check the condition for resolving the promise.
-            if (res.statusCode >= 200 && res.statusCode < 300) {
-              resolve(response);
-            } else if (do_retry) {
-              console.warn(`[${new Date().toISOString()}][PROXY] ${config.method} request to ${config.hostname ?? config.host + config.path} failed with status ${res.statusCode}.\nretrying...`);
-              //call backoff and retry the request.
-              await backoff(i);
-            } else if (i === retries - 1) {
-              resolve(response);
-            } else {
-              resolve(response);
-            }
-          });
-
-          // timeout handler
-          res.on("timeout", () => {
-            reject(new Error(`Request to ${config.hostname ?? config.host + config.path} timed out.`));
-          });
-
-          res.on("error", (err) => {
-            reject(err);
-          });
+      // for (let i = 0; i < retries; i++) {
+      const req = _agent.request(config, (res) => {
+        // collect the data
+        res.on("data", (chunk) => {
+          _data.push(chunk);
         });
 
-        // send the data depending on the type of data.
-        if (data && data instanceof Buffer) {
-          req.write(data);
-        } else if (data && typeof data === "string") {
-          req.write(data, "utf-8");
-        } else if (data && typeof data === "object") {
-          req.write(JSON.stringify(data), "utf-8");
-        }
-        // close the request
-        req.end();
+        // on end of request
+        res.on("end", async () => {
+          let _body;
+
+          try {
+            if (res.headers["content-type"]?.includes("application/json")) {
+              _body = JSON.parse(Buffer.concat(_data).toString("utf-8"));
+            }
+            //parse html for content type text/html
+            else if (res.headers["content-type"]?.includes("text/html")) {
+              _body = Buffer.concat(_data).toString("utf-8");
+            } else {
+              // check if header has encoding and use that to decode the buffer.
+              _body = Buffer.concat(_data).toString(res.headers["content-encoding"] ?? "utf-8");
+            }
+          } catch (err) {
+            _body = Buffer.concat(_data).toString();
+          }
+
+          const response = {
+            status: res.statusCode,
+            status_message: res.statusMessage,
+            headers: res.headers,
+            body: _body,
+          };
+
+          // check the condition for resolving the promise.
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(response);
+            // } else if (do_retry) {
+            //   console.warn(`[${new Date().toISOString()}][PROXY] ${config.method} request to ${config.hostname ?? config.host + config.path} failed with status ${res.statusCode}.\nretrying...`);
+            //call backoff and retry the request.
+            // await backoff(i);
+            // } else if (i === retries - 1) {
+            //   resolve(response);
+          } else {
+            resolve(response);
+          }
+        });
+
+        // timeout handler
+        res.on("timeout", () => {
+          reject(new Error(`Request to ${config.hostname ?? config.host + config.path} timed out.`));
+        });
+
+        // on error
+        res.on("error", (err) => {
+          reject(err);
+        });
+      });
+
+      req.on("error", (err) => {
+        reject(err);
+      });
+
+      // send the data depending on the type of data.
+      if (data && data instanceof Buffer) {
+        req.write(data, (error) => {
+          if (error) {
+            reject(error);
+          }
+        });
+      } else if (data && typeof data === "string") {
+        req.write(data, "utf-8", (error) => {
+          if (error) {
+            reject(error);
+          }
+        });
+      } else if (data && typeof data === "object") {
+        req.write(JSON.stringify(data), "utf-8", (error) => {
+          if (error) {
+            reject(error);
+          }
+        });
       }
+      // close the request
+      req.end();
+
     } catch (err) {
       reject(err);
     }
@@ -172,15 +190,27 @@ const proxyMiddleware = (req, res) => {
     if (targetRequest.headers["accept-encoding"] && !targetRequest.headers["accept-encoding"].includes("utf-8")) {
       delete targetRequest.headers["accept-encoding"];
       targetRequest.headers["accept-encoding"] = "utf-8";
+    } else {
+      targetRequest.headers["accept-encoding"] = "utf-8";
     }
 
     // change host to target host
     targetRequest.headers.host = targetRequest.url.host;
 
-    // add content-length header if not present
-    // if (!targetRequest.headers["content-length"] && targetRequest.method !== "GET" && targetRequest.method !== "HEAD") {
-    //   targetRequest.headers["content-length"] = getContentLength(targetRequest.headers["content-type"], req.body);
-    // }
+    // check if charset is present and modify that to utf-8, also if not present then add it.
+    // this only for content-type header with `application/json` or `text/html` or `text/plain` or `application/xml`
+    if (
+      (targetRequest.headers["content-type"] && targetRequest.headers["content-type"]?.includes("application/json")) ||
+      targetRequest.headers["content-type"]?.includes("text/html") ||
+      targetRequest.headers["content-type"]?.includes("text/plain") ||
+      targetRequest.headers["content-type"]?.includes("application/xml")
+    ) {
+      if (targetRequest.headers["content-type"]?.includes("charset")) {
+        targetRequest.headers["content-type"] = targetRequest.headers["content-type"].replace(/charset=[\w-]+/g, "charset=utf-8");
+      } else {
+        targetRequest.headers["content-type"] += "; charset=utf-8";
+      }
+    }
 
     // add via headers
     // targetRequest.headers.Via = `1.1 ${host}:${port} (Mock Proxy)`;
@@ -189,7 +219,7 @@ const proxyMiddleware = (req, res) => {
     const config = {
       protocol: protocol,
       hostname: targetRequest.url.hostname,
-      port: parseInt(targetRequest.url?.port || protocol === "https" ? "443" : "8000"),
+      port: parseInt(targetRequest.url?.port ?? (protocol === "https" ? "443" : "8000")),
       path: targetRequest.url.pathname + targetRequest.url.search,
       method: targetRequest.method,
       headers: targetRequest.headers,
@@ -198,6 +228,8 @@ const proxyMiddleware = (req, res) => {
       // this is to override the certificate validation for https calls.
       // not suitbale to use in production or in any other environment where security is a concern.
       // rejectUnauthorized: false,
+      // max redirects to be followed.
+      maxRedirects: 20,
     };
 
     // Make the request to the target URL
