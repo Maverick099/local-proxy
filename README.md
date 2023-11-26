@@ -1,13 +1,6 @@
 # local-proxy
 Proxy to test CAP app locally if using the sap-cloud-sdk and on-premise destination.
 
-> [!CAUTION]
-> Currently facing an `408|Timeout` error on `POST` calls
-> 
-> Posted on [stackoverflow](https://stackoverflow.com/questions/77479879/post-call-using-https-request-returns-40) and also issue raised on [Node/Help](https://github.com/nodejs/help/issues/4296) repo.
->
-> Help is most appreciated here. 
-
 
 ### run proxy:
 `npm start`
